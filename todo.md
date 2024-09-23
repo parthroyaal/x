@@ -1,0 +1,4 @@
+
+
+The issue you're describing is likely due to the way your updatePriceWidget function was structured in the previous version. In that version, you were assuming that the barData passed to the function would always have price information for all three (Call, Spot, Put) instruments. However, your data is structured so that each CSV file only contains data for one instrument at a time.
+Therefore, when updatePriceWidget was called, it might only receive a barData object containing Call price information, but it would still try to extract Spot and Put prices from it, which would be undefined or NaN. This is why the previous version might not have had the NaN issue, but also wouldn't update all charts correctly.

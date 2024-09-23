@@ -17,28 +17,31 @@
     }
 
     .chart-container {
-    display: flex;
-    flex-wrap: wrap;
-    width: 100%;
-    height: 100vh;
-    overflow: visible; /* Ensure overflow is visible */
-}
+      display: flex;
+      flex-wrap: wrap;
+      width: 100%;
+      height: 100vh;
+      overflow: visible;
+      /* Ensure overflow is visible */
+    }
 
-.chart-wrapper {
-    width: 50%;
-    height: 50%;
-    padding: 10px;
-    box-sizing: border-box;
-    overflow: visible; /* Ensure overflow is visible */
-}
+    .chart-wrapper {
+      width: 50%;
+      height: 50%;
+      padding: 10px;
+      box-sizing: border-box;
+      overflow: visible;
+      /* Ensure overflow is visible */
+    }
 
-.chart {
-    width: 100%;
-    height: 100%;
-    border: 1px solid #ddd;
-    box-sizing: border-box;
-    overflow: visible; /* Ensure overflow is visible */
-}
+    .chart {
+      width: 100%;
+      height: 100%;
+      border: 1px solid #ddd;
+      box-sizing: border-box;
+      overflow: visible;
+      /* Ensure overflow is visible */
+    }
 
     #formSection {
       display: flex;
@@ -302,22 +305,72 @@
       return data;
     }
 
+    // Updated dataArrays structure to hold resampled data for each chart
     const dataArrays = {
-      '5S': [],
-      '1': [],
-      '3': [],
-      '5': [],
-      '15': [],
-      '30': [],
-      '60': [],
-      '120': [],
-      '240': [],
-      '1D': [],
-      '1W': [],
-      '1M': []
+      leftTop: {
+        '5S': [],
+        '1': [],
+        '3': [],
+        '5': [],
+        '15': [],
+        '30': [],
+        '60': [],
+        '120': [],
+        '240': [],
+        '1D': [],
+        '1W': [],
+        '1M': []
+      },
+      rightTop: {
+        '5S': [],
+        '1': [],
+        '3': [],
+        '5': [],
+        '15': [],
+        '30': [],
+        '60': [],
+        '120': [],
+        '240': [],
+        '1D': [],
+        '1W': [],
+        '1M': []
+      },
+      leftBottom: {
+        '5S': [],
+        '1': [],
+        '3': [],
+        '5': [],
+        '15': [],
+        '30': [],
+        '60': [],
+        '120': [],
+        '240': [],
+        '1D': [],
+        '1W': [],
+        '1M': []
+      },
+      rightBottom: {
+        '5S': [],
+        '1': [],
+        '3': [],
+        '5': [],
+        '15': [],
+        '30': [],
+        '60': [],
+        '120': [],
+        '240': [],
+        '1D': [],
+        '1W': [],
+        '1M': []
+      }
     };
 
-    let historicalData = []; // Stores data for resampling
+    let historicalData = { // Store historical data for each chart
+      leftTop: [],
+      rightTop: [],
+      leftBottom: [],
+      rightBottom: []
+    };
 
     function streamData(data, interval = 5000) {
       let index = 0;
@@ -326,10 +379,15 @@
           return new Promise((resolve) => {
             if (index < data.length) {
               setTimeout(() => {
-                resolve({ value: data[index++], done: false });
+                resolve({
+                  value: data[index++],
+                  done: false
+                });
               }, interval);
             } else {
-              resolve({ done: true });
+              resolve({
+                done: true
+              });
             }
           });
         },
@@ -427,64 +485,111 @@
     }
 
     async function startStreaming(allData) {
-      // Combine data from all four CSV files into a single array, sorted by time
-      const combinedData = [...allData.leftTop, ...allData.rightTop, ...allData.leftBottom, ...allData.rightBottom]
-        .sort((a, b) => a.time - b.time);
+      // Create separate data streams for each CSV file
+      const dataStreams = {
+        leftTop: streamData(allData.leftTop, 1000),
+        rightTop: streamData(allData.rightTop, 1000),
+        leftBottom: streamData(allData.leftBottom, 1000),
+        rightBottom: streamData(allData.rightBottom, 1000),
+      };
 
-      const dataStream = streamData(combinedData, 1000);
-      for await (const newData of dataStream) {
-        if (isPaused) {
-          await new Promise(resolve => {
-            const resumeListener = () => {
-              if (!isPaused) {
-                resolve();
-                document.removeEventListener('keydown', resumeListener);
+      // Keep track of the latest data for each stream
+      const latestData = {};
+
+      // Function to handle incoming data for a specific chart
+      async function handleStream(chartId, dataStream) {
+        for await (const newData of dataStream) {
+          if (isPaused) {
+            await new Promise(resolve => {
+              const resumeListener = () => {
+                if (!isPaused) {
+                  resolve();
+                  document.removeEventListener('keydown', resumeListener);
+                }
+              }
+              document.addEventListener('keydown', resumeListener);
+            });
+          }
+          console.log(`New data received for ${chartId}:`, new Date(newData.time), newData);
+
+          // Store the latest data for this chart
+          latestData[chartId] = newData;
+
+          // Update historical data for this chart
+          historicalData[chartId].push(newData);
+
+          // Notify subscribers for this specific chart
+          notifySubscribersForChart(chartId, newData);
+
+          // Update dataArrays for the 5S timeframe
+          dataArrays[chartId]['5S'].push(newData);
+
+          // Resample and update dataArrays for other timeframes
+          for (let timeframe in dataArrays[chartId]) {
+            if (timeframe !== '5S') {
+              const resampledData = resampleData(historicalData[chartId], timeframe);
+              if (resampledData.length > 0) {
+                dataArrays[chartId][timeframe] = resampledData;
               }
             }
-            document.addEventListener('keydown', resumeListener);
-          });
-        }
-
-        console.log("New data received:", new Date(newData.time), newData);
-
-        // Update 5S array directly
-        dataArrays['5S'].push(newData);
-        historicalData.push(newData); // Add new data to historical data
-
-        // Resample data for other timeframes
-        for (let timeframe in dataArrays) {
-          if (timeframe !== '5S') {
-            // Aggregate data for the specific timeframe
-            const aggregatedData = aggregateData(historicalData, timeframe);
-            dataArrays[timeframe] = aggregatedData; // Update dataArrays with aggregated data
           }
-        }
 
-        notifySubscribers(newData);
+        }
+        console.log(`Streaming completed for ${chartId}`);
       }
-      console.log("Streaming completed");
+
+      // Start streaming for each chart concurrently
+      await Promise.all([
+        handleStream('leftTop', dataStreams.leftTop),
+        handleStream('rightTop', dataStreams.rightTop),
+        handleStream('leftBottom', dataStreams.leftBottom),
+        handleStream('rightBottom', dataStreams.rightBottom),
+      ]);
+
+      // Update price widget after all charts have been updated
+      updatePriceWidget(latestData);
     }
+
 
     const subscribers = new Map();
 
-    function notifySubscribers(newData) {
+    function notifySubscribersForChart(chartId, newData) {
       for (let [subscriberUID, handler] of subscribers) {
-        const {
-          resolution
-        } = handler;
+        // Check if the subscriber is interested in this chart's data
+        if (handler.symbolInfo.name === getChartSymbolName(chartId)) {
+          const {
+            resolution
+          } = handler;
 
-        if (resolution === '5S') {
-          handler.callback(newData);
-        } else {
-          const resampledData = resampleData(historicalData, resolution);
-          if (resampledData.length > 0) {
-            handler.callback(resampledData[resampledData.length - 1]); // Send the latest resampled data
+          if (resolution === '5S') {
+            handler.callback(newData);
+          } else {
+            // Get the latest resampled data for the specific chart and resolution
+            const resampledData = dataArrays[chartId][resolution]; 
+            if (resampledData.length > 0) {
+              handler.callback(resampledData[resampledData.length - 1]); // Send the latest resampled data
+            }
           }
         }
       }
 
       // Update price widget after notifying chart subscribers
-      updatePriceWidget(newData);
+      // updatePriceWidget(newData); // Moved to handleStream after all charts are updated
+    }
+
+    function getChartSymbolName(chartId) {
+      switch (chartId) {
+        case 'leftTop':
+          return 'CE Data';
+        case 'rightTop':
+          return 'SPOT Data';
+        case 'leftBottom':
+          return 'PE Data';
+        case 'rightBottom':
+          return 'RHEL Data';
+        default:
+          return '';
+      }
     }
 
     const configurationData = {
@@ -531,34 +636,35 @@
           volume_precision: 2,
           data_status: 'streaming',
           visible: true, // Ensure the time scale (X-axis) is visible
-        // right_offset: 5, // Adjust as needed
-    };
-      
+          // right_offset: 5, // Adjust as needed
+        };
+
         onSymbolResolvedCallback(symbolInfo);
       },
 
       getBars: (symbolInfo, resolution, periodParams, onHistoryCallback, onErrorCallback) => {
-        const {
-          from,
-          to,
-          firstDataRequest
-        } = periodParams;
+        const { from, to, firstDataRequest } = periodParams;
         console.log('[getBars]: Method call', symbolInfo, resolution, new Date(from * 1000), new Date(to * 1000));
 
+        // Get the chartId corresponding to the requested symbol
+        const chartId = getChartIdFromSymbol(symbolInfo.name);
+
+        // Get the data for the requested resolution from the correct chart's data
+        let bars = chartId ? dataArrays[chartId][resolution] : []; // If chartId is not found, return an empty array
+
         if (firstDataRequest) {
-          const bars = dataArrays[resolution];
-          console.log(`[getBars]: returned entire ${resolution} array (${bars.length} bar(s))`, bars);
+          console.log(`[getBars]: returned entire ${resolution} array for ${symbolInfo.name} (${bars.length} bar(s))`, bars);
           onHistoryCallback(bars, {
             noData: bars.length === 0
           });
         } else {
-          const bars = dataArrays[resolution].filter(bar => {
+          const filteredBars = bars.filter(bar => {
             const barTime = bar.time / 1000;
             return barTime >= from && barTime < to;
           });
-          console.log(`[getBars]: returned ${bars.length} bar(s)`, bars);
-          onHistoryCallback(bars, {
-            noData: bars.length === 0
+          console.log(`[getBars]: returned ${filteredBars.length} bar(s) for ${symbolInfo.name}`, filteredBars);
+          onHistoryCallback(filteredBars, {
+            noData: filteredBars.length === 0
           });
         }
       },
@@ -578,10 +684,25 @@
       },
     };
 
+    function getChartIdFromSymbol(symbolName) {
+      switch (symbolName) {
+        case 'CE Data':
+          return 'leftTop';
+        case 'SPOT Data':
+          return 'rightTop';
+        case 'PE Data':
+          return 'leftBottom';
+        case 'RHEL Data':
+          return 'rightBottom';
+        default:
+          return null;
+      }
+    }
+
     let currentSection = 1; // Keep track of the current section
     let currentInterval = '5S'; // Default interval 
 
-    document.getElementById('loadCharts').addEventListener('click', async function() {
+    document.getElementById('loadCharts').addEventListener('click', async function () {
       const leftTopFile = document.getElementById('leftTop').files[0];
       const rightTopFile = document.getElementById('rightTop').files[0];
       const leftBottomFile = document.getElementById('leftBottom').files[0];
@@ -623,13 +744,13 @@
     function createChart(containerId, data, symbolName, interval) {
       const widget = new TradingView.widget({
         layout: {
-        // Maximize the chart area:
-        bottomMargin: 0,
-        time_scale: {
+          // Maximize the chart area:
+          bottomMargin: 0,
+          time_scale: {
             visible: true, // Ensure the time scale (X-axis) is visible
             right_offset: 5, // Adjust as needed
+          },
         },
-    },
 
         symbol: symbolName,
         interval: interval, // Use the specified interval
@@ -643,10 +764,38 @@
         library_path: 'charting_library/',
         theme: 'Dark',
         time_scale: {
-        visible: true, // Ensure the time scale (X-axis) is visible
-        // right_offset: 5, // Adjust as needed
-    }
+          visible: true, // Ensure the time scale (X-axis) is visible
+          // right_offset: 5, // Adjust as needed
+        }
+        
       });
+      
+  widget.onChartReady(() => {
+    // Add RSI
+    widget.chart().createStudy('Relative Strength Index', false, false, {
+      length: 14,
+    });
+
+    // Add MACD
+    widget.chart().createStudy('MACD', false, false, {
+      fast_length: 12,
+      slow_length: 26,
+      signal_length: 9,
+    });
+
+    // Add Moving Averages
+    const studies = [
+      { name: "Moving Average", inputs: { length: 12 }, id: "MA12", options: { "plot.linewidth": 3, "plot.color": "#FFFF00" } },
+      { name: "Moving Average", inputs: { length: 24 }, id: "MA24", options: { "plot.linewidth": 3, "plot.color": "#FF0000" } },
+      { name: "Moving Average", inputs: { length: 50 }, id: "MA50", options: { "plot.linewidth": 3, "plot.color": "#FFFFFF" } },
+      { name: "Moving Average", inputs: { length: 200 }, id: "MA200", options: { "plot.linewidth": 4, "plot.color": "#0000FF" } }
+    ];
+
+    studies.forEach(study => {
+      widget.chart().createStudy(study.name, false, false, study.inputs, study.options, { id: study.id });
+    });
+  });
+
       return widget;
     }
 
@@ -681,7 +830,7 @@
     // Add click event listeners to the tabs
     const tabLinks = document.querySelectorAll(".tab-link");
     tabLinks.forEach(link => {
-      link.addEventListener("click", function(event) {
+      link.addEventListener("click", function (event) {
         event.preventDefault();
         const targetId = this.getAttribute("href").substring(1);
         const targetContent = document.getElementById(targetId);
@@ -692,7 +841,7 @@
     });
 
     // Add keyboard shortcuts for Ctrl+1 to Ctrl+9
-    document.addEventListener("keydown", function(event) {
+    document.addEventListener("keydown", function (event) {
       if (event.altKey && event.key >= '1' && event.key <= '9') {
         const sectionNumber = parseInt(event.key);
         if (sectionNumber >= 1 && sectionNumber <= 9) {
@@ -728,7 +877,7 @@
       }
     }
 
-    document.addEventListener('keydown', function(event) {
+    document.addEventListener('keydown', function (event) {
       if (event.ctrlKey && event.key === '.') {
         event.preventDefault();
         toggleWidget('price-widget');
@@ -781,7 +930,7 @@
 
         if (closestBar) {
           lastUpdateTime = closestBar.time;
-          updatePriceWidget(closestBar);
+          // updatePriceWidget(closestBar); // Now updated in handleStream
         }
 
         if (priceWidgetVisible) {
@@ -791,19 +940,24 @@
       }
     }
 
-    function updatePriceWidget(barData) {
-      const currentTime = new Date(barData.time).toLocaleTimeString();
+    function updatePriceWidget(latestData) {
+      let currentTime = '-';
+      let callPrice = 0,
+        spotPrice = 0,
+        putPrice = 0;
 
-      // Determine the source of the bar data and update prices accordingly
-      let callPrice = 0, spotPrice = 0, putPrice = 0;
-      if (allBars.leftTop.some(bar => bar.time === barData.time)) {
-        callPrice = barData.close;
+      // Check if latestData has entries for each chart
+      if (latestData.leftTop) {
+        currentTime = new Date(latestData.leftTop.time).toLocaleTimeString();
+        callPrice = latestData.leftTop.close;
       }
-      if (allBars.rightTop.some(bar => bar.time === barData.time)) {
-        spotPrice = barData.close;
+      if (latestData.rightTop) {
+        currentTime = new Date(latestData.rightTop.time).toLocaleTimeString(); // Update time if newer
+        spotPrice = latestData.rightTop.close;
       }
-      if (allBars.leftBottom.some(bar => bar.time === barData.time)) {
-        putPrice = barData.close;
+      if (latestData.leftBottom) {
+        currentTime = new Date(latestData.leftBottom.time).toLocaleTimeString(); // Update time if newer
+        putPrice = latestData.leftBottom.close;
       }
 
       document.getElementById('currentTime').innerText = currentTime;
